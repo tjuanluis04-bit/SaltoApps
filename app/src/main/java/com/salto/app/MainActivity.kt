@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -93,7 +94,7 @@ fun Home() {
     }
 
     val searching = query.isNotBlank()
-    val results = if (searching) apps.filter { it.label.contains(query.trim(), true) } else emptyList()
+    val results = if (searching) apps.filter { it.label.contains(query.trim(), ignoreCase = true) } else emptyList()
     val pinned = favs.mapNotNull { byPkg[it] }
     val recent = recents.mapNotNull { byPkg[it] }.filter { it.pkg !in favs }.take(4)
     val tile: @Composable (AppItem) -> Unit = { a -> AppTile(a, a.pkg in favs, { open(a) }, { pin(a) }) }
