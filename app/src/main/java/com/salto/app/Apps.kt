@@ -31,8 +31,10 @@ fun launch(ctx: Context, pkg: String): Boolean {
 }
 
 class Store(ctx: Context) {
-    private val p = ctx.getSharedPreferences("salto", Context.MODE_PRIVATE)
+    val p = ctx.getSharedPreferences("salto", Context.MODE_PRIVATE)
     private fun read(k: String) = p.getString(k, "")!!.split(",").filter { it.isNotBlank() }
+    fun bubble() = p.getBoolean("bubble", false)
+    fun setBubble(v: Boolean) = p.edit().putBoolean("bubble", v).apply()
     fun favs() = read("favs")
     fun recents() = read("recents")
     fun saveFavs(l: List<String>) = p.edit().putString("favs", l.joinToString(",")).apply()

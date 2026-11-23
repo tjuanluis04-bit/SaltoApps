@@ -1,6 +1,10 @@
 package com.salto.app
 
+import android.content.Intent
+import android.content.SharedPreferences
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -43,7 +47,14 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+val resumeTick = mutableIntStateOf(0)
+
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        resumeTick.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -80,6 +91,30 @@ fun Home() {
     var query by rememberSaveable { mutableStateOf("") }
     val byPkg = remember(apps) { apps.associateBy { it.pkg } }
 
+    var bubbleOn by remember { mutableStateOf(store.bubble()) }
+    var pending by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        val l = SharedPreferences.OnSharedPreferenceChangeListener { _, k ->
+            if (k == "bubble") bubbleOn = store.bubble()
+        }
+        store.p.registerOnSharedPreferenceChangeListener(l)
+        onDispose { store.p.unregisterOnSharedPreferenceChangeListener(l) }
+    }
+    LaunchedEffect(resumeTick.intValue) {
+        bubbleOn = store.bubble()
+        if (pending && Settings.canDrawOverlays(ctx)) { pending = false; BubbleService.start(ctx) }
+    }
+    fun toggleBubble(on: Boolean) {
+        if (!on) BubbleService.stop(ctx)
+        else if (Settings.canDrawOverlays(ctx)) BubbleService.start(ctx)
+        else {
+            pending = true
+            ctx.startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+            )
+        }
+    }
+
     fun open(a: AppItem) {
         if (launch(ctx, a.pkg)) {
             recents.remove(a.pkg); recents.add(0, a.pkg)
@@ -112,13 +147,14 @@ fun Home() {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Header(query, { query = it }) { results.firstOrNull()?.let { open(it) } }
         }
+        item(span = { GridItemSpan(maxLineSpan) }) { BubbleCard(bubbleOn) { toggleBubble(it) } }
         if (searching) {
             if (results.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Note("Ninguna app coincide con «${query.trim()}».")
             }
             items(results, key = { "r-" + it.pkg }) { tile(it) }
         } else {
-            section("Fijadas", pinned, "p-", "Mantén pulsada una app para fijarla aquí.", tile)
+            section("Fijadas", pinned, "p-", "Mantén pulsada una app para fijarla; saldrá en la burbuja.", tile)
             section("Recientes", recent, "c-", null, tile)
             section("Todas", apps, "a-", null, tile)
         }
@@ -199,5 +235,21 @@ fun AppTile(a: AppItem, pinned: Boolean, onClick: () -> Unit, onLong: () -> Unit
         }
         Spacer(Modifier.height(6.dp))
         Text(a.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = c.onBackground)
+    }
+}
+
+@Composable
+fun BubbleCard(on: Boolean, onChange: (Boolean) -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.surface)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Burbuja flotante", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = c.onSurface)
+            Text("Tus apps fijadas, a un toque desde cualquier app", fontSize = 13.sp, color = c.onSurfaceVariant)
+        }
+        Switch(checked = on, onCheckedChange = onChange)
     }
 }
