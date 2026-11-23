@@ -2,10 +2,12 @@ package com.salto.app
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
 
+@Immutable
 data class AppItem(val label: String, val pkg: String, val icon: ImageBitmap)
 
 fun loadApps(ctx: Context): List<AppItem> {

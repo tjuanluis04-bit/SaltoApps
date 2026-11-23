@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
@@ -79,11 +80,7 @@ class BubbleService : Service() {
         super.onDestroy()
     }
 
-    private fun pkgs() = store.favs()
-        .filter { packageManager.getLaunchIntentForPackage(it) != null }
-        .take(7)
-
-    private fun panelHeight() = (pkgs().size + 2) * dp(52) + dp(20)
+    private fun pkgs() = store.favs().filter { packageManager.getLaunchIntentForPackage(it) != null }
 
     private fun render() {
         val r = root ?: return
@@ -92,11 +89,18 @@ class BubbleService : Service() {
         if (!expanded) {
             r.addView(bubble); lp.x = bx; lp.y = by
         } else {
-            val panel = panelView()
-            val ph = panelHeight()
-            val above = by + dp(56) + ph > sh - dp(24)
+            val list = pkgs()
+            val row = dp(52); val footer = row * 2; val pad = dp(12); val margin = dp(8)
+            val below = sh - (by + dp(56)) - dp(40)
+            val up = by - dp(40)
+            val apps = list.size * row
+            val above = apps + footer + pad + margin > below && up > below
+            val avail = if (above) up else below
+            val h = apps.coerceAtMost((avail - footer - pad - margin).coerceAtLeast(row))
+            val panel = panelView(list, h)
             if (above) {
-                r.addView(panel); r.addView(bubble); lp.y = (by - ph).coerceAtLeast(0)
+                r.addView(panel); r.addView(bubble)
+                lp.y = (by - (h + footer + pad + margin)).coerceAtLeast(0)
             } else {
                 r.addView(bubble); r.addView(panel); lp.y = by
             }
@@ -120,17 +124,24 @@ class BubbleService : Service() {
         wm.updateViewLayout(root, lp)
     }
 
+    private fun roundClip(v: View) {
+        v.outlineProvider = ViewOutlineProvider.BACKGROUND
+        v.clipToOutline = true
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun bubbleView(): View {
         val v = FrameLayout(this)
         v.layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
-        v.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#1F6F5C")) }
-        v.outlineProvider = ViewOutlineProvider.BACKGROUND
-        v.clipToOutline = true
+        v.background = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#2FA68C"), Color.parseColor("#0F3A31"))
+        ).apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.parseColor("#80FFFFFF")) }
+        roundClip(v)
         v.elevation = dp(4).toFloat()
         v.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_fg)
-            scaleX = 1.5f; scaleY = 1.5f
+            scaleX = 1.1f; scaleY = 1.1f
             layoutParams = FrameLayout.LayoutParams(-1, -1)
         })
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
@@ -152,8 +163,8 @@ class BubbleService : Service() {
         return v
     }
 
-    private fun panelView(): View {
-        val p = LinearLayout(this).apply {
+    private fun panelView(list: List<String>, appsHeight: Int): View {
+        val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(4), dp(6), dp(4), dp(6))
@@ -163,18 +174,29 @@ class BubbleService : Service() {
             layoutParams = LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { topMargin = dp(4); bottomMargin = dp(4) }
         }
-        for (pkg in pkgs()) {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        for (pkg in list) {
             val icon = try { packageManager.getApplicationIcon(pkg) } catch (e: Exception) { null } ?: continue
-            p.addView(tile(ImageView(this).apply { setImageDrawable(icon) }, Color.TRANSPARENT) {
+            col.addView(tile(ImageView(this).apply { setImageDrawable(icon) }, Color.TRANSPARENT) {
                 launch(this@BubbleService, pkg); collapse()
             })
         }
-        p.addView(tile(label("+"), Color.parseColor("#E8A93B")) {
+        val sv = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(col)
+            layoutParams = LinearLayout.LayoutParams(dp(48), appsHeight)
+        }
+        panel.addView(sv)
+        panel.addView(tile(label("+"), Color.parseColor("#F2B84B")) {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             collapse()
         })
-        p.addView(tile(label("✕"), Color.parseColor("#33FFFFFF")) { stopSelf() })
-        return p
+        panel.addView(tile(label("✕"), Color.parseColor("#33FFFFFF")) { stopSelf() })
+        return panel
     }
 
     private fun label(t: String) = TextView(this).apply {
@@ -184,8 +206,7 @@ class BubbleService : Service() {
     private fun tile(v: View, bg: Int, onClick: () -> Unit): View {
         v.layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(0, dp(4), 0, dp(4)) }
         v.background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(14).toFloat() }
-        v.outlineProvider = ViewOutlineProvider.BACKGROUND
-        v.clipToOutline = true
+        roundClip(v)
         v.setOnClickListener { onClick() }
         return v
     }

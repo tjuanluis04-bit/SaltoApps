@@ -132,7 +132,10 @@ fun Home() {
     val results = if (searching) apps.filter { it.label.contains(query.trim(), ignoreCase = true) } else emptyList()
     val pinned = favs.mapNotNull { byPkg[it] }
     val recent = recents.mapNotNull { byPkg[it] }.filter { it.pkg !in favs }.take(4)
-    val tile: @Composable (AppItem) -> Unit = { a -> AppTile(a, a.pkg in favs, { open(a) }, { pin(a) }) }
+    var picking by remember { mutableStateOf(false) }
+    val onTap = remember { { a: AppItem -> if (picking) pin(a) else open(a) } }
+    val onHold = remember { { a: AppItem -> pin(a) } }
+    val tile: @Composable (AppItem) -> Unit = { a -> AppTile(a, a.pkg in favs, onTap, onHold) }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(80.dp),
@@ -148,14 +151,17 @@ fun Home() {
             Header(query, { query = it }) { results.firstOrNull()?.let { open(it) } }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { BubbleCard(bubbleOn) { toggleBubble(it) } }
+        item(span = { GridItemSpan(maxLineSpan) }) { PickRow(picking, favs.size) { picking = !picking } }
         if (searching) {
             if (results.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Note("Ninguna app coincide con «${query.trim()}».")
             }
             items(results, key = { "r-" + it.pkg }) { tile(it) }
         } else {
-            section("Fijadas", pinned, "p-", "Mantén pulsada una app para fijarla; saldrá en la burbuja.", tile)
-            section("Recientes", recent, "c-", null, tile)
+            if (!picking) {
+                section("Fijadas", pinned, "p-", "Pulsa «Elegir apps» para escoger las de la burbuja.", tile)
+                section("Recientes", recent, "c-", null, tile)
+            }
             section("Todas", apps, "a-", null, tile)
         }
     }
@@ -217,11 +223,11 @@ fun Header(query: String, onQuery: (String) -> Unit, onGo: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun AppTile(a: AppItem, pinned: Boolean, onClick: () -> Unit, onLong: () -> Unit) {
+fun AppTile(a: AppItem, pinned: Boolean, onOpen: (AppItem) -> Unit, onPin: (AppItem) -> Unit) {
     val c = MaterialTheme.colorScheme
     Column(
         Modifier.clip(RoundedCornerShape(16.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLong)
+            .combinedClickable(onClick = { onOpen(a) }, onLongClick = { onPin(a) })
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -251,5 +257,27 @@ fun BubbleCard(on: Boolean, onChange: (Boolean) -> Unit) {
             Text("Tus apps fijadas, a un toque desde cualquier app", fontSize = 13.sp, color = c.onSurfaceVariant)
         }
         Switch(checked = on, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+fun PickRow(picking: Boolean, count: Int, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (picking) "Toca las apps para añadirlas o quitarlas ($count)" else "$count apps en la burbuja",
+            fontSize = 13.sp, color = c.onSurfaceVariant, modifier = Modifier.weight(1f)
+        )
+        Box(
+            Modifier.clip(RoundedCornerShape(20.dp))
+                .background(if (picking) c.primary else c.surface)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Text(
+                if (picking) "Listo" else "Elegir apps", fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold, color = if (picking) c.background else c.primary
+            )
+        }
     }
 }

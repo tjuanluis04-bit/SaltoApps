@@ -18,7 +18,7 @@ jobs:
       - name: Build APK (con reintentos)
         run: |
           for i in 1 2 3 4; do
-            gradle assembleDebug --no-daemon && exit 0
+            gradle assembleRelease --no-daemon && exit 0
             echo "Intento $i falló; reintentando en $((i*60))s"
             sleep $((i*60))
           done
@@ -26,4 +26,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Salto-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/release/*.apk
