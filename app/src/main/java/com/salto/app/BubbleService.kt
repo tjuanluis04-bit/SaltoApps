@@ -8,12 +8,15 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -24,7 +27,6 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
 
@@ -34,12 +36,35 @@ class BubbleService : Service() {
     private var root: LinearLayout? = null
     private lateinit var lp: WindowManager.LayoutParams
     private var expanded = false
+    private var hidden = false
+    private var dragging = false
     private var bx = 0
     private var by = 0
+    private var cur: String? = null
+    private var prev: String? = null
+    private var last: String? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private val sw get() = resources.displayMetrics.widthPixels
     private val sh get() = resources.displayMetrics.heightPixels
+    private val bs get() = dp(store.size())
+
+    private val hideTask = Runnable {
+        val r = root
+        if (r != null && !expanded && !dragging && store.edge()) {
+            hidden = true
+            lp.x = if (bx < sw / 2) -bs / 2 else sw - bs / 2
+            wm.updateViewLayout(r, lp)
+        }
+    }
+
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, k ->
+        if (k == "size" || k == "alpha" || k == "color" || k == "edge" || k == "favs") {
+            if (k == "size") bx = if (bx < sw / 2) 0 else sw - bs
+            render()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
@@ -58,23 +83,29 @@ class BubbleService : Service() {
         lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START }
-        bx = sw - dp(56); by = dp(260)
+        bx = sw - bs; by = dp(260)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
             setOnTouchListener { _, e ->
                 if (e.action == MotionEvent.ACTION_OUTSIDE) collapse()
                 false
             }
         }
         wm.addView(root, lp)
+        store.p.registerOnSharedPreferenceChangeListener(prefListener)
         render()
         store.setBubble(true)
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(hideTask)
+        if (root != null) store.p.unregisterOnSharedPreferenceChangeListener(prefListener)
         root?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         store.setBubble(false)
         super.onDestroy()
@@ -82,21 +113,29 @@ class BubbleService : Service() {
 
     private fun pkgs() = store.favs().filter { packageManager.getLaunchIntentForPackage(it) != null }
 
+    private fun scheduleHide() {
+        handler.removeCallbacks(hideTask)
+        if (store.edge() && !expanded) handler.postDelayed(hideTask, 2500)
+    }
+
     private fun render() {
         val r = root ?: return
+        handler.removeCallbacks(hideTask)
         r.removeAllViews()
         val bubble = bubbleView()
         if (!expanded) {
-            r.addView(bubble); lp.x = bx; lp.y = by
+            bubble.alpha = store.alpha() / 100f
+            r.addView(bubble); lp.x = bx; lp.y = by; hidden = false
+            scheduleHide()
         } else {
             val list = pkgs()
-            val row = dp(52); val footer = row * 2; val pad = dp(12); val margin = dp(8)
-            val below = sh - (by + dp(56)) - dp(40)
+            val row = dp(52); val footer = row * 3; val pad = dp(12); val margin = dp(8)
+            val below = sh - (by + bs) - dp(40)
             val up = by - dp(40)
-            val apps = list.size * row
-            val above = apps + footer + pad + margin > below && up > below
+            val appsH = list.size * row
+            val above = appsH + footer + pad + margin > below && up > below
             val avail = if (above) up else below
-            val h = apps.coerceAtMost((avail - footer - pad - margin).coerceAtLeast(row))
+            val h = appsH.coerceAtMost((avail - footer - pad - margin).coerceAtLeast(row))
             val panel = panelView(list, h)
             if (above) {
                 r.addView(panel); r.addView(bubble)
@@ -104,7 +143,7 @@ class BubbleService : Service() {
             } else {
                 r.addView(bubble); r.addView(panel); lp.y = by
             }
-            lp.x = bx
+            lp.x = bx; hidden = false
         }
         wm.updateViewLayout(r, lp)
     }
@@ -113,15 +152,19 @@ class BubbleService : Service() {
 
     private fun toggle() {
         expanded = !expanded
-        if (expanded) { bx = lp.x; by = lp.y }
+        if (expanded) {
+            bx = lp.x; by = lp.y
+            cur = foregroundPkg(this) ?: last
+        }
         render()
     }
 
     private fun snap() {
-        bx = if (lp.x + dp(28) < sw / 2) 0 else sw - dp(56)
+        bx = if (lp.x + bs / 2 < sw / 2) 0 else sw - bs
         by = lp.y.coerceIn(dp(24), sh - dp(120))
         lp.x = bx; lp.y = by
         wm.updateViewLayout(root, lp)
+        scheduleHide()
     }
 
     private fun roundClip(v: View) {
@@ -131,11 +174,11 @@ class BubbleService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun bubbleView(): View {
+        val i = store.colorIdx().coerceIn(0, Palette.starts.lastIndex)
         val v = FrameLayout(this)
-        v.layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+        v.layoutParams = LinearLayout.LayoutParams(bs, bs)
         v.background = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(Color.parseColor("#2FA68C"), Color.parseColor("#0F3A31"))
+            GradientDrawable.Orientation.TL_BR, intArrayOf(Palette.starts[i], Palette.ends[i])
         ).apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.parseColor("#80FFFFFF")) }
         roundClip(v)
         v.elevation = dp(4).toFloat()
@@ -147,20 +190,35 @@ class BubbleService : Service() {
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
         v.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y; moved = false }
+                MotionEvent.ACTION_DOWN -> {
+                    handler.removeCallbacks(hideTask)
+                    if (hidden) { hidden = false; lp.x = bx; wm.updateViewLayout(root, lp) }
+                    sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y; moved = false
+                }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - sx; val dy = e.rawY - sy
-                    if (!expanded && (abs(dx) > dp(6) || abs(dy) > dp(6))) moved = true
+                    if (!expanded && (abs(dx) > dp(6) || abs(dy) > dp(6))) { moved = true; dragging = true }
                     if (moved) {
                         lp.x = (ox + dx).toInt(); lp.y = (oy + dy).toInt()
                         wm.updateViewLayout(root, lp)
                     }
                 }
-                MotionEvent.ACTION_UP -> { if (!moved) toggle() else snap() }
+                MotionEvent.ACTION_UP -> {
+                    dragging = false
+                    if (!moved) toggle() else snap()
+                }
+                MotionEvent.ACTION_CANCEL -> { dragging = false; scheduleHide() }
             }
             true
         }
         return v
+    }
+
+    private fun goTo(pkg: String) {
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val home = packageManager.resolveActivity(homeIntent, 0)?.activityInfo?.packageName
+        if (pkg == home) startActivity(homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        else launch(this, pkg)
     }
 
     private fun panelView(list: List<String>, appsHeight: Int): View {
@@ -181,26 +239,41 @@ class BubbleService : Service() {
         for (pkg in list) {
             val icon = try { packageManager.getApplicationIcon(pkg) } catch (e: Exception) { null } ?: continue
             col.addView(tile(ImageView(this).apply { setImageDrawable(icon) }, Color.TRANSPARENT) {
-                launch(this@BubbleService, pkg); collapse()
+                prev = cur; last = pkg
+                launch(this@BubbleService, pkg)
+                collapse()
             })
         }
-        val sv = ScrollView(this).apply {
+        panel.addView(ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(col)
             layoutParams = LinearLayout.LayoutParams(dp(48), appsHeight)
-        }
-        panel.addView(sv)
-        panel.addView(tile(label("+"), Color.parseColor("#F2B84B")) {
+        })
+        val canBack = prev != null
+        panel.addView(iconTile(R.drawable.ic_back, "#33FFFFFF", null, if (canBack) 1f else 0.35f) {
+            val t = prev
+            if (t != null) { prev = cur; last = t; goTo(t) }
+            collapse()
+        })
+        panel.addView(iconTile(R.drawable.ic_plus, "#F2B84B", "#3A2A00", 1f) {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             collapse()
         })
-        panel.addView(tile(label("✕"), Color.parseColor("#33FFFFFF")) { stopSelf() })
+        panel.addView(iconTile(R.drawable.ic_close, "#33FFFFFF", null, 1f) {
+            store.setWant(false); stopSelf()
+        })
         return panel
     }
 
-    private fun label(t: String) = TextView(this).apply {
-        text = t; gravity = Gravity.CENTER; textSize = 18f; setTextColor(Color.WHITE)
+    private fun iconTile(res: Int, bg: String, tint: String?, a: Float, onClick: () -> Unit): View {
+        val iv = ImageView(this).apply {
+            setImageResource(res)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            if (tint != null) setColorFilter(Color.parseColor(tint))
+            alpha = a
+        }
+        return tile(iv, Color.parseColor(bg), onClick)
     }
 
     private fun tile(v: View, bg: Int, onClick: () -> Unit): View {
