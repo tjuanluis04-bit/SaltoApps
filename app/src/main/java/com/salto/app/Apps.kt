@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Process
 import android.content.Intent
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
@@ -86,3 +87,6 @@ fun foregroundPkg(c: Context): String? {
     }
     return last
 }
+
+/** Estado real de la burbuja: vive en memoria, así que se reinicia solo si el sistema mata la app. */
+val bubbleRunning = mutableStateOf(false)

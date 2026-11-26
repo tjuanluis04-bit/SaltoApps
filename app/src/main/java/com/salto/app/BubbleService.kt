@@ -100,14 +100,14 @@ class BubbleService : Service() {
         wm.addView(root, lp)
         store.p.registerOnSharedPreferenceChangeListener(prefListener)
         render()
-        store.setBubble(true)
+        bubbleRunning.value = true
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(hideTask)
         if (root != null) store.p.unregisterOnSharedPreferenceChangeListener(prefListener)
         root?.let { try { wm.removeView(it) } catch (_: Exception) {} }
-        store.setBubble(false)
+        bubbleRunning.value = false
         super.onDestroy()
     }
 

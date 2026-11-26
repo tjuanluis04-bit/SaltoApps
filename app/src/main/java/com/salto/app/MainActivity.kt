@@ -107,18 +107,11 @@ fun Home() {
     var query by rememberSaveable { mutableStateOf("") }
     val byPkg = remember(apps) { apps.associateBy { it.pkg } }
 
-    var bubbleOn by remember { mutableStateOf(store.bubble()) }
+    val bubbleOn = bubbleRunning.value
     var pending by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) {
-        val l = SharedPreferences.OnSharedPreferenceChangeListener { _, k ->
-            if (k == "bubble") bubbleOn = store.bubble()
-        }
-        store.p.registerOnSharedPreferenceChangeListener(l)
-        onDispose { store.p.unregisterOnSharedPreferenceChangeListener(l) }
-    }
     LaunchedEffect(resumeTick.intValue) {
-        bubbleOn = store.bubble()
         if (pending && Settings.canDrawOverlays(ctx)) { pending = false; BubbleService.start(ctx) }
+        else if (store.want() && !bubbleRunning.value && Settings.canDrawOverlays(ctx)) BubbleService.start(ctx)
     }
     fun toggleBubble(on: Boolean) {
         store.setWant(on)
